@@ -50,15 +50,15 @@ log_channel_id = None
 points_channel_id = None
 points_data = load_data()
 
-# Check if the user has administrator permissions
-def is_admin(interaction: discord.Interaction):
-    return interaction.user.guild_permissions.administrator
+# Check if the user has "Event Host" role
+def is_event_host(interaction: discord.Interaction):
+    return any(role.name == "Event Host" for role in interaction.user.roles)
 
 # Command to give the Event Host role (only for admins)
 @bot.tree.command(name="givehost")
 async def give_host(interaction: discord.Interaction, member: discord.Member):
     # Only allow administrators to give the Event Host role
-    if not is_admin(interaction):
+    if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("You don't have permission to use this command. Only administrators can use it.", ephemeral=True)
         return
 
@@ -71,7 +71,7 @@ async def give_host(interaction: discord.Interaction, member: discord.Member):
     else:
         await interaction.response.send_message("The 'Event Host' role doesn't exist.", ephemeral=True)
 
-# Register the slash command to log the event
+# Register the slash command to log the event (only Event Hosts can use it)
 @bot.tree.command(name="log")
 async def log(
     interaction: discord.Interaction,
@@ -80,6 +80,10 @@ async def log(
     attendees: str,
     multiplier: int = 1,
 ):
+    if not is_event_host(interaction):  # Check if the user is an Event Host
+        await interaction.response.send_message("You do not have permission to log events. Only users with the 'Event Host' role can log events.", ephemeral=True)
+        return
+
     if log_channel_id is None:
         await interaction.response.send_message("Please set the log channel first using /setlogchannel")
         return
