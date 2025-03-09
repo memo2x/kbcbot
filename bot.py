@@ -135,4 +135,10 @@ async def set_log_channel(interaction: discord.Interaction, channel: discord.Tex
 # ✅ Keep the bot alive
 keep_alive()
 
+# Sync the commands on bot ready
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user}')
+    await bot.tree.sync()  # Ensure commands are up to date
+
 bot.run(TOKEN)
