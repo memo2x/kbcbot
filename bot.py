@@ -1,9 +1,24 @@
+from flask import Flask
+from threading import Thread
 import discord
 from discord.ext import commands
-from discord import app_commands
 import json
 import os
 from dotenv import load_dotenv
+
+# Flask server to keep Replit awake
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "I'm alive!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    server = Thread(target=run_flask)
+    server.start()
 
 # Load token from .env file
 load_dotenv()
@@ -33,9 +48,9 @@ log_channel_id = None
 points_channel_id = None
 points_data = load_data()
 
-# Check if user has the Event Host role
-def is_event_host(ctx):
-    return any(role.name == "Event Host" for role in ctx.author.roles)
+# Check if user has "Event Host" role
+def is_event_host(interaction):
+    return any(role.name == "Event Host" for role in interaction.user.roles)
 
 @bot.event
 async def on_ready():
@@ -54,28 +69,38 @@ async def setlogchannel(interaction: discord.Interaction, channel: discord.TextC
     log_channel_id = channel.id
     await interaction.response.send_message(f'Log channel set to {channel.mention}')
 
-# Register log slash command (Only Event Hosts can use)
+# Register /givehost slash command to assign "Event Host" role
+@bot.tree.command(name="givehost")
+async def givehost(interaction: discord.Interaction, member: discord.Member):
+    role = discord.utils.get(interaction.guild.roles, name="Event Host")
+    if role not in member.roles:
+        await member.add_roles(role)
+        await interaction.response.send_message(f"{member.mention} has been given the Event Host role!")
+    else:
+        await interaction.response.send_message(f"{member.mention} already has the Event Host role!")
+
+# Register log slash command
 @bot.tree.command(name="log")
 async def log(
     interaction: discord.Interaction,
     host: discord.Member,
     co: discord.Member,
     attendees: str,
-    multiplier: int = 1,  # 1, 2, 3, 4, or 5 multiplier
+    multiplier: int = 1
 ):
+    # Check if user is Event Host
     if not is_event_host(interaction):  # Check if user has Event Host role
-        await interaction.response.send_message("You do not have permission to log events. Please contact an admin.", ephemeral=True)
+        await interaction.response.send_message("You don't have the required Event Host role to log events.")
         return
 
     if log_channel_id is None:
-        await interaction.response.send_message("Please set the log channel first using /setlogchannel.", ephemeral=True)
+        await interaction.response.send_message("Please set the log channel first using /setlogchannel")
         return
 
     log_channel = bot.get_channel(log_channel_id)
 
-    # Ensure log_channel is valid
-    if log_channel is None:
-        await interaction.response.send_message("Log channel is invalid or not found.", ephemeral=True)
+    if not log_channel:
+        await interaction.response.send_message("Invalid log channel. Please reset it.")
         return
 
     # Convert the attendees string to a list of members
@@ -96,46 +121,30 @@ async def log(
         if member:
             attendee_members.append(member)
 
-    # Points system: give points based on multiplier
+    # Points system: Create roles and assign them
     all_participants = [host, co] + attendee_members
     for user in all_participants:
-        # Check and give the appropriate role based on points
-        current_points = points_data.get(str(user.id), 0)
-        new_points = current_points + multiplier
+        points_data.setdefault(str(user.id), 0)
+        points_data[str(user.id)] += multiplier
 
-        points_data[str(user.id)] = new_points
-        # Add the role based on new points
-        role_name = f"{new_points}p"
+        # Create or assign points role
+        points = points_data[str(user.id)]
+        role_name = f"{points}p"
+
         role = discord.utils.get(interaction.guild.roles, name=role_name)
-
-        if not role:
+        if role is None:
             role = await interaction.guild.create_role(name=role_name)
 
-        await user.add_roles(role)
+        if role not in user.roles:
+            await user.add_roles(role)
 
     save_data(points_data)
 
-    # Log event message in Log Channel
     log_message = f"Host: {host.mention}\nCo: {co.mention}\nAttendees: {' '.join(a.mention for a in attendee_members)}"
     await log_channel.send(log_message)
 
-    await interaction.response.send_message("Event logged and roles updated successfully!")
+    await interaction.response.send_message("Event logged successfully!")
 
-# Register givehost slash command (assign Event Host role)
-@bot.tree.command(name="givehost")
-async def givehost(interaction: discord.Interaction, member: discord.Member):
-    # Check if the user has permission to assign roles (admin/mod)
-    if not interaction.user.guild_permissions.manage_roles:
-        await interaction.response.send_message("You do not have permission to assign roles.")
-        return
-
-    role = discord.utils.get(interaction.guild.roles, name="Event Host")
-    if not role:
-        # Create the role if it doesn't exist
-        role = await interaction.guild.create_role(name="Event Host")
-
-    await member.add_roles(role)
-    await interaction.response.send_message(f"{member.mention} has been given the Event Host role.")
-
-# Run the bot
+# ✅ Keep the bot online
+keep_alive()
 bot.run(TOKEN)
