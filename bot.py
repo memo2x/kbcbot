@@ -1,12 +1,14 @@
-from flask import Flask
-from threading import Thread
 import discord
 from discord.ext import commands
 import json
 import os
 from dotenv import load_dotenv
 
-# Flask server to keep Replit awake
+# Flask server to keep Replit awake (If you're using it)
+from flask import Flask
+from threading import Thread
+
+# Flask server to keep the bot alive on Replit
 app = Flask(__name__)
 
 @app.route('/')
@@ -48,59 +50,43 @@ log_channel_id = None
 points_channel_id = None
 points_data = load_data()
 
-# Check if user has "Event Host" role
-def is_event_host(interaction):
-    return any(role.name == "Event Host" for role in interaction.user.roles)
+# Check if the user has administrator permissions
+def is_admin(interaction: discord.Interaction):
+    return interaction.user.guild_permissions.administrator
 
-@bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user}')
-    await bot.tree.sync()
-
-# Register a simple slash command (hello)
-@bot.tree.command(name="hello")
-async def hello(interaction: discord.Interaction):
-    await interaction.response.send_message("Hello, World!")
-
-# Register setlogchannel slash command
-@bot.tree.command(name="setlogchannel")
-async def setlogchannel(interaction: discord.Interaction, channel: discord.TextChannel):
-    global log_channel_id
-    log_channel_id = channel.id
-    await interaction.response.send_message(f'Log channel set to {channel.mention}')
-
-# Register /givehost slash command to assign "Event Host" role
+# Command to give the Event Host role (only for admins)
 @bot.tree.command(name="givehost")
-async def givehost(interaction: discord.Interaction, member: discord.Member):
-    role = discord.utils.get(interaction.guild.roles, name="Event Host")
-    if role not in member.roles:
-        await member.add_roles(role)
-        await interaction.response.send_message(f"{member.mention} has been given the Event Host role!")
-    else:
-        await interaction.response.send_message(f"{member.mention} already has the Event Host role!")
+async def give_host(interaction: discord.Interaction, member: discord.Member):
+    # Only allow administrators to give the Event Host role
+    if not is_admin(interaction):
+        await interaction.response.send_message("You don't have permission to use this command. Only administrators can use it.", ephemeral=True)
+        return
 
-# Register log slash command
+    # Get the Event Host role
+    event_host_role = discord.utils.get(interaction.guild.roles, name="Event Host")
+
+    if event_host_role:
+        await member.add_roles(event_host_role)
+        await interaction.response.send_message(f"Successfully gave {member.mention} the Event Host role.")
+    else:
+        await interaction.response.send_message("The 'Event Host' role doesn't exist.", ephemeral=True)
+
+# Register the slash command to log the event
 @bot.tree.command(name="log")
 async def log(
     interaction: discord.Interaction,
     host: discord.Member,
     co: discord.Member,
     attendees: str,
-    multiplier: int = 1
+    multiplier: int = 1,
 ):
-    # Check if user is Event Host
-    if not is_event_host(interaction):  # Check if user has Event Host role
-        await interaction.response.send_message("You don't have the required Event Host role to log events.")
-        return
-
     if log_channel_id is None:
         await interaction.response.send_message("Please set the log channel first using /setlogchannel")
         return
 
     log_channel = bot.get_channel(log_channel_id)
-
     if not log_channel:
-        await interaction.response.send_message("Invalid log channel. Please reset it.")
+        await interaction.response.send_message("Log channel not found. Please set it again.")
         return
 
     # Convert the attendees string to a list of members
@@ -111,7 +97,7 @@ async def log(
         if mention.startswith("<@") and mention.endswith(">"):  # If it's a mention
             member_id = int(mention[2:-1])
             member = interaction.guild.get_member(member_id)
-        else:  
+        else:  # Try to handle user ID
             try:
                 member_id = int(mention)
                 member = interaction.guild.get_member(member_id)
@@ -121,30 +107,28 @@ async def log(
         if member:
             attendee_members.append(member)
 
-    # Points system: Create roles and assign them
+    # Points system: apply multiplier to points
     all_participants = [host, co] + attendee_members
     for user in all_participants:
         points_data.setdefault(str(user.id), 0)
         points_data[str(user.id)] += multiplier
 
-        # Create or assign points role
-        points = points_data[str(user.id)]
-        role_name = f"{points}p"
-
-        role = discord.utils.get(interaction.guild.roles, name=role_name)
-        if role is None:
-            role = await interaction.guild.create_role(name=role_name)
-
-        if role not in user.roles:
-            await user.add_roles(role)
-
     save_data(points_data)
 
-    log_message = f"Host: {host.mention}\nCo: {co.mention}\nAttendees: {' '.join(a.mention for a in attendee_members)}"
+    # Log message
+    log_message = f"Host: {host.mention}\nCo: {co.mention}\nAttendees: {' '.join(a.mention for a in attendee_members)}\nMultiplier: x{multiplier}"
     await log_channel.send(log_message)
 
     await interaction.response.send_message("Event logged successfully!")
 
-# ✅ Keep the bot online
+# Register the slash command to set the log channel
+@bot.tree.command(name="setlogchannel")
+async def set_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    global log_channel_id
+    log_channel_id = channel.id
+    await interaction.response.send_message(f"Log channel set to {channel.mention}")
+
+# ✅ Keep the bot alive
 keep_alive()
+
 bot.run(TOKEN)
